@@ -2,14 +2,17 @@
 from __future__ import annotations
 
 import logging
+import shutil
+import os
 from typing import Dict, List, Optional, Sequence, Tuple
 
-import numpy as np
 import requests
-from sentence_transformers import SentenceTransformer
+from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_community.vectorstores import Chroma
+from langchain_core.documents import Document
 
 from .config import DataConfig, GenerationConfig, RetrievalConfig
-from .document import chunk_text, extract_text_from_pdf, l2_normalize
+from .document import chunk_text, extract_text_from_pdf
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +35,10 @@ class RAGPipeline:
         self.system_prompt = generation.system_prompt
 
         logger.info("Loading embedding model: %s", retrieval.embedding_model)
-        self.embedder = SentenceTransformer(retrieval.embedding_model)
+        self.embedder = HuggingFaceEmbeddings(
+            model_name=retrieval.embedding_model,
+            encode_kwargs={'normalize_embeddings': True}
+        )
 
         raw_text = self._load_corpus()
         if not raw_text.strip():
@@ -48,14 +54,22 @@ class RAGPipeline:
         if not self.chunks:
             raise ValueError("Chunking produced no passages. Adjust chunk size or provide richer text.")
 
-        logger.info("Embedding %d chunks...", len(self.chunks))
-        embeddings = self.embedder.encode(
-            self.chunks,
-            batch_size=16,
-            show_progress_bar=True,
-            convert_to_numpy=True,
+        logger.info("Embedding %d chunks into ChromaDB...", len(self.chunks))
+        
+        if os.path.exists("./chroma_db"):
+            shutil.rmtree("./chroma_db")
+
+        documents = [
+            Document(page_content=chunk, metadata={"index": i})
+            for i, chunk in enumerate(self.chunks)
+        ]
+        
+        self.db = Chroma.from_documents(
+            documents=documents,
+            embedding=self.embedder,
+            persist_directory="./chroma_db",
+            collection_metadata={"hnsw:space": "cosine"}
         )
-        self.embeddings = l2_normalize(np.array(embeddings, dtype=np.float32))
         logger.info("Embedding completed.")
         logger.info("Request timeout set to %.1f seconds", generation.request_timeout)
 
@@ -87,13 +101,15 @@ class RAGPipeline:
         if not question or not question.strip():
             raise ValueError("Question must not be empty.")
         top_k_value = top_k or self.retrieval_config.top_k
-        query_embedding = self.embedder.encode([
-            question
-        ], show_progress_bar=False, convert_to_numpy=True)
-        query_embedding = l2_normalize(np.array(query_embedding, dtype=np.float32))[0]
-        scores = self.embeddings @ query_embedding
-        top_indices = np.argsort(scores)[::-1][:top_k_value]
-        return [(self.chunks[idx], float(scores[idx]), int(idx)) for idx in top_indices]
+        
+        results = self.db.similarity_search_with_score(question, k=top_k_value)
+        
+        context_items = []
+        for doc, score in results:
+            idx = doc.metadata.get("index", -1)
+            context_items.append((doc.page_content, float(score), int(idx)))
+            
+        return context_items
 
     # ------------------------------------------------------------------
     # Prompting helpers
