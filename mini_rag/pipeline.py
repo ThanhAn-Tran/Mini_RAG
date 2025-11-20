@@ -12,7 +12,7 @@ from langchain_community.vectorstores import Chroma
 from langchain_core.documents import Document
 
 from .config import DataConfig, GenerationConfig, RetrievalConfig
-from .document import chunk_text, extract_text_from_pdf
+from .document import load_and_split_document
 
 logger = logging.getLogger(__name__)
 
@@ -40,59 +40,79 @@ class RAGPipeline:
             encode_kwargs={'normalize_embeddings': True}
         )
 
-        raw_text = self._load_corpus()
-        if not raw_text.strip():
-            raise ValueError(
-                "No text found in the provided sources. Provide --text or install OCR dependencies."
-            )
+        persist_directory = "./chroma_db"
+        should_reindex = data.force_reindex
 
-        self.chunks = chunk_text(
-            raw_text,
-            chunk_size=retrieval.chunk_size,
-            chunk_overlap=retrieval.chunk_overlap,
-        )
-        if not self.chunks:
-            raise ValueError("Chunking produced no passages. Adjust chunk size or provide richer text.")
+        if should_reindex and os.path.exists(persist_directory):
+            logger.info("Force reindex requested. Removing existing database...")
+            shutil.rmtree(persist_directory)
 
-        logger.info("Embedding %d chunks into ChromaDB...", len(self.chunks))
-        
-        if os.path.exists("./chroma_db"):
-            shutil.rmtree("./chroma_db")
-
-        documents = [
-            Document(page_content=chunk, metadata={"index": i})
-            for i, chunk in enumerate(self.chunks)
-        ]
-        
-        self.db = Chroma.from_documents(
-            documents=documents,
-            embedding=self.embedder,
-            persist_directory="./chroma_db",
+        # Initialize Chroma (loads existing if available, or prepares to create new)
+        self.db = Chroma(
+            persist_directory=persist_directory,
+            embedding_function=self.embedder,
             collection_metadata={"hnsw:space": "cosine"}
         )
-        logger.info("Embedding completed.")
+
+        # Check if we need to ingest data (if DB is empty)
+        if self.db._collection.count() == 0:
+            logger.info("Database is empty or reindex requested. Loading and indexing data...")
+            self.chunks = self._load_and_chunk_corpus()
+            if not self.chunks:
+                raise ValueError("Chunking produced no passages. Adjust chunk size or provide richer text.")
+
+            logger.info("Embedding %d chunks into ChromaDB...", len(self.chunks))
+            
+            documents = [
+                Document(page_content=chunk, metadata={"index": i})
+                for i, chunk in enumerate(self.chunks)
+            ]
+            
+            self.db.add_documents(documents)
+            logger.info("Embedding completed.")
+        else:
+            logger.info("Loaded existing database with %d documents.", self.db._collection.count())
+            logger.info("Skipping re-indexing. Use --reindex to force update.")
+
         logger.info("Request timeout set to %.1f seconds", generation.request_timeout)
 
     # ------------------------------------------------------------------
     # Data loading
     # ------------------------------------------------------------------
-    def _load_corpus(self) -> str:
+    def _load_and_chunk_corpus(self) -> List[str]:
         data_config = self.data_config
-        if data_config.text_path is not None:
-            logger.info("Loading pre-extracted text from %s", data_config.text_path)
-            if not data_config.text_path.exists():
-                raise FileNotFoundError(f"Text file not found: {data_config.text_path}")
-            return data_config.text_path.read_text(encoding="utf-8")
+        retrieval_config = self.retrieval_config
+        
+        file_path = None
+        if data_config.text_path is not None and data_config.text_path.exists():
+            file_path = data_config.text_path
+        elif data_config.pdf_path.exists():
+            file_path = data_config.pdf_path
+            
+        if not file_path:
+             raise FileNotFoundError("No valid text or PDF file found in configuration.")
 
-        if not data_config.pdf_path.exists():
-            raise FileNotFoundError(f"PDF file not found: {data_config.pdf_path}")
-
-        return extract_text_from_pdf(
-            pdf_path=data_config.pdf_path,
-            use_ocr=data_config.use_ocr,
-            ocr_lang=data_config.ocr_lang,
-            poppler_path=data_config.poppler_path,
-        )
+        if file_path.is_dir():
+            logger.info("Loading documents from directory: %s", file_path)
+            all_chunks = []
+            for file in file_path.iterdir():
+                if file.is_file() and file.suffix.lower() in ['.txt', '.pdf']:
+                    try:
+                        chunks = load_and_split_document(
+                            file,
+                            chunk_size=retrieval_config.chunk_size,
+                            chunk_overlap=retrieval_config.chunk_overlap
+                        )
+                        all_chunks.extend(chunks)
+                    except Exception as e:
+                        logger.warning("Failed to load file %s: %s", file, e)
+            return all_chunks
+        else:
+            return load_and_split_document(
+                file_path,
+                chunk_size=retrieval_config.chunk_size,
+                chunk_overlap=retrieval_config.chunk_overlap
+            )
 
     # ------------------------------------------------------------------
     # Retrieval
@@ -124,8 +144,9 @@ class RAGPipeline:
         merged_prompt = system_prompt or self.system_prompt
         if merged_prompt is None:
             system_prompt = (
-                "Bạn là học giả trợ lý chuyên phân tích giáo trình tư tưởng Hồ Chí Minh. "
-                "Luôn trả lời bằng tiếng Việt. Chỉ sử dụng thông tin trong các đoạn ngữ cảnh đã cho, trích dẫn rõ."
+                "Bạn là trợ lý AI chuyên về Tư tưởng Hồ Chí Minh. "
+                "Hãy trả lời câu hỏi dựa trên ngữ cảnh được cung cấp. "
+                "Trả lời chi tiết, chính xác và hoàn toàn bằng tiếng Việt."
             )
         else:
             system_prompt = merged_prompt
@@ -139,9 +160,10 @@ class RAGPipeline:
             f"Câu hỏi: {question}\n\n"
             f"Ngữ cảnh:\n{context_text}\n\n"
             "Hướng dẫn:\n"
-            "- Nếu ngữ cảnh liên quan, trả lời rõ ràng, chia thành các mục nếu phù hợp.\n"
-            "- Chèn trích dẫn dạng (Đoạn #) ngay sau luận điểm lấy từ ngữ cảnh.\n"
-            "- Nếu ngữ cảnh chưa đủ, nói rõ 'Chưa có thông tin đủ để kết luận từ tài liệu'."
+            "- Dựa vào ngữ cảnh trên để trả lời câu hỏi.\n"
+            "- Nếu ngữ cảnh không có thông tin, hãy nói 'Không tìm thấy thông tin trong tài liệu'.\n"
+            "- Trả lời hoàn toàn bằng tiếng Việt.\n"
+            "- Trích dẫn (Đoạn #) cho mỗi ý."
         )
 
         return [
@@ -153,11 +175,17 @@ class RAGPipeline:
     # Generation
     # ------------------------------------------------------------------
     def call_model(self, messages: List[Dict[str, str]]) -> str:
+        # LM Studio / OpenAI compatible payload
+        # Note: Some local servers map 'frequency_penalty' to repetition penalty.
+        # We will send both standard OpenAI params and some common local LLM params just in case.
         payload = {
             "model": self.generation_config.model_id,
             "messages": messages,
             "temperature": self.generation_config.temperature,
             "max_tokens": self.generation_config.max_output_tokens,
+            "frequency_penalty": 0.5,  # Standard OpenAI param to reduce repetition
+            "presence_penalty": 0.5,   # Standard OpenAI param to encourage new topics
+            "repeat_penalty": self.generation_config.repetition_penalty, # Common local LLM param
         }
         url = f"{self.generation_config.api_base.rstrip('/')}/v1/chat/completions"
         response = requests.post(url, json=payload, timeout=self.generation_config.request_timeout)

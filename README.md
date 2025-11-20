@@ -1,69 +1,67 @@
-# Mini RAG Demo (Tiếng Việt)
+# Mini RAG Demo (Tiếng Việt) - LangChain & ChromaDB
 
-Dự án minh họa Retrieval-Augmented Generation (RAG) trên giáo trình Tư tưởng Hồ Chí Minh. Ứng dụng dùng LM Studio (API tương thích OpenAI) để sinh câu trả lời kèm trích dẫn đoạn văn liên quan.
+Dự án minh họa Retrieval-Augmented Generation (RAG) tối ưu cho tiếng Việt. Ứng dụng sử dụng **LangChain**, **ChromaDB** (Vector Database) và **LM Studio** (chạy model **Vinallama**) để sinh câu trả lời chính xác từ dữ liệu của bạn.
 
 ## 1. Chuẩn bị môi trường
+
+### 1.1. Cài đặt Python & Thư viện
 1. **Cài Python**: phiên bản 3.10 trở lên.
-2. **Cài LM Studio** và mở server tại `http://127.0.0.1:1234` với model `llama-2-7b-chat` (hoặc sửa tham số `--model`).
-3. **Tạo virtualenv và cài thư viện**:
+2. **Tạo môi trường ảo và cài thư viện**:
    ```powershell
    python -m venv .venv
    .venv\Scripts\activate
    pip install --upgrade pip
    pip install -r requirements.txt
    ```
-4. **Dữ liệu sẵn có** (đã đặt trong thư mục `data/`):
-   - `data/880-giao-trinh-tu-tuong-ho-chi-minh-thuviensach.vn.docx`
-   - `data/gt-tu-tuong-ho-chi-minh-bo-gddt-2010.pdf`
-   - `data/data_docx.txt` (văn bản đã trích từ DOCX)
-   - `data/data.txt` (kết quả OCR từ PDF, tùy chọn)
 
-> Khi hoàn thành công việc, hãy xoá thư mục `.venv` trước khi đẩy lên GitHub (trên Windows có thể cần xoá bằng Explorer nếu một số file bị khoá).
+### 1.2. Cài đặt & Cấu hình LM Studio (Quan trọng)
+Dự án này được tối ưu để chạy với model **Vinallama** (chuyên tiếng Việt).
 
-## 2. Tiền xử lý tài liệu (tuỳ chọn)
-- **Chuyển DOCX → TXT** (đã có sẵn `data/data_docx.txt`, chỉ chạy lại nếu cập nhật tài liệu):
-  ```powershell
-  python scripts/docx_to_text.py --docx data/880-giao-trinh-tu-tuong-ho-chi-minh-thuviensach.vn.docx --output data/data_docx.txt
-  ```
-- **OCR PDF ảnh bằng EasyOCR** (nếu muốn thay thế):
-  ```powershell
-  python scripts/ocr_extractor.py --pdf data/gt-tu-tuong-ho-chi-minh-bo-gddt-2010.pdf --output data/data.txt --lang vi en
-  ```
+1. Tải và cài đặt [LM Studio](https://lmstudio.ai/).
+2. Trong LM Studio, tìm kiếm và tải model: `vinallama-7b-chat`.
+3. Vào tab **Local Server** (biểu tượng `<->` bên trái):
+   - Chọn model `vinallama-7b-chat` vừa tải ở trên cùng.
+   - Đảm bảo **Server Port** là `1234`.
+   - Nhấn **Start Server**.
 
-## 3. Chạy demo Gradio
-Dùng file văn bản đã trích (`data_docx.txt`) để bỏ qua OCR nội bộ:
+## 2. Chạy ứng dụng
+
+### 2.1. Chạy với một file dữ liệu
+Nếu bạn chỉ có một file văn bản:
 ```powershell
-python -m mini_rag.cli --text data/data_docx.txt --port 7860 --request-timeout 3600 --chunk-size 180 --chunk-overlap 40 --top-k 6
+python -m mini_rag.cli --text data/data_docx.txt
 ```
-Thông số quan trọng:
-- `--api-base`, `--model`: cấu hình LM Studio.
-- `--chunk-size`, `--chunk-overlap`, `--top-k`: tinh chỉnh truy hồi.
-- `--system-prompt` hoặc `--system-prompt-file`: ghi đè lời nhắc hệ thống (mặc định trả lời tiếng Việt, trích dẫn (Đoạn #) và báo khi thiếu thông tin).
-- `--no-ocr`, `--ocr-lang`, `--poppler-path`: chỉ dùng khi cần trích trực tiếp từ PDF.
 
-Sau khi chạy, mở `http://127.0.0.1:7860` để truy vấn. Phần “Đoạn tham chiếu” liệt kê chính xác các đoạn văn được dùng để trả lời.
+### 2.2. Chạy với nhiều file dữ liệu (MỚI)
+Bạn có thể trỏ vào một **thư mục** chứa nhiều file `.txt` hoặc `.pdf`. Hệ thống sẽ tự động đọc tất cả các file trong đó:
 
-## 4. Cấu trúc mã
+```powershell
+# Ví dụ: Load tất cả file trong thư mục data/
+python -m mini_rag.cli --text data/
+```
+
+Sau khi chạy, mở trình duyệt tại `http://127.0.0.1:7860` để bắt đầu hỏi đáp.
+
+### Các tham số tùy chỉnh khác:
+- `--chunk-size`: Kích thước đoạn văn bản (mặc định 500 - đã tối ưu cho Vinallama).
+- `--top-k`: Số lượng đoạn văn bản liên quan nhất được lấy ra (mặc định 5).
+- `--device`: Thiết bị chạy embedding (`cpu` hoặc `cuda`).
+
+## 3. Cấu trúc dự án
+
 ```
 mini_rag/
-  ├── config.py      # các dataclass cấu hình
-  ├── document.py    # trích xuất/OCR, chia đoạn, chuẩn hóa
-  ├── pipeline.py    # pipeline RAG: nhúng, truy hồi, prompt, gọi model
-  ├── ui.py          # giao diện Gradio
-  └── cli.py         # parse tham số, xây dựng pipeline & chạy UI
-mini_rag_app.py      # wrapper gọi mini_rag.cli (giữ tương thích lệnh cũ)
-scripts/
-  ├── docx_to_text.py   # công cụ chuyển DOCX -> TXT
-  └── ocr_extractor.py  # OCR PDF bằng EasyOCR
-data/
-  ├── *.docx / *.pdf    # tài liệu gốc
-  └── *.txt             # văn bản đã trích xuất
-requirements.txt     # danh sách thư viện cần cài
+  ├── config.py      # Cấu hình (Generation params: temp 0.7, penalty 1.1)
+  ├── document.py    # Xử lý tài liệu (Loader, Splitter)
+  ├── pipeline.py    # RAG Pipeline (Hỗ trợ load thư mục & file lẻ)
+  ├── ui.py          # Giao diện Gradio
+  └── cli.py         # Xử lý dòng lệnh
+chroma_db/           # Nơi lưu dữ liệu vector (Đã được ignore khỏi git)
+data/                # Thư mục chứa dữ liệu gốc
 ```
 
-## 5. Ghi chú & gợi ý mở rộng
-- Có thể bổ sung reranker hoặc vector DB (FAISS, Chroma) nếu muốn lưu cache embedding.
-- Bật `--share` khi cần đường link public từ Gradio.
-- Nếu muốn chạy REST thay vì UI, tái sử dụng `mini_rag.pipeline.RAGPipeline` và viết endpoint riêng.
+## 4. Lưu ý quan trọng
+- **ChromaDB**: Thư mục `chroma_db/` chứa database vector sẽ được tạo tự động khi chạy lần đầu. Thư mục này đã được thêm vào `.gitignore` để không đẩy dữ liệu rác lên git.
+- **Hiệu năng**: Lần chạy đầu tiên sẽ mất thời gian để tạo index (embedding) cho dữ liệu. Các lần sau sẽ khởi động rất nhanh vì dùng lại DB đã lưu.
+- **Model**: Đã được tinh chỉnh tham số (`repetition_penalty=1.1`) để tránh lỗi lặp từ hay gặp ở các model 7B.
 
-Chúc bạn demo thành công!

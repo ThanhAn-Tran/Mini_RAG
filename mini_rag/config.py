@@ -13,23 +13,25 @@ class DataConfig:
     use_ocr: bool = True
     ocr_lang: str = "vie+eng"
     poppler_path: Optional[str] = None
+    force_reindex: bool = False
 
 
 @dataclass
 class RetrievalConfig:
-    embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
-    chunk_size: int = 200
-    chunk_overlap: int = 50
+    embedding_model: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+    chunk_size: int = 500
+    chunk_overlap: int = 100
     top_k: int = 5
 
 
 @dataclass
 class GenerationConfig:
     api_base: str = "http://127.0.0.1:1234"
-    model_id: str = "llama-2-7b-chat"
-    temperature: float = 0.1
-    max_output_tokens: int = 512
+    model_id: str = "vinallama-7b-chat"
+    temperature: float = 0.7
+    max_output_tokens: int = 1024
     request_timeout: float = 1200.0
+    repetition_penalty: float = 1.1
     system_prompt: Optional[str] = None
 
 

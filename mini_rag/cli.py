@@ -32,16 +32,16 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--model",
-        default=os.environ.get("LMSTUDIO_MODEL", "llama-2-7b-chat"),
+        default=os.environ.get("LMSTUDIO_MODEL", "vinallama-7b-chat"),
         help="Tên model LM Studio expose.",
     )
     parser.add_argument(
         "--embedding-model",
-        default="sentence-transformers/all-MiniLM-L6-v2",
+        default="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
         help="Tên embedding model từ sentence-transformers.",
     )
-    parser.add_argument("--chunk-size", type=int, default=200, help="Số lượng từ tối đa mỗi đoạn.")
-    parser.add_argument("--chunk-overlap", type=int, default=50, help="Số từ trùng giữa các đoạn.")
+    parser.add_argument("--chunk-size", type=int, default=1000, help="Số lượng từ tối đa mỗi đoạn.")
+    parser.add_argument("--chunk-overlap", type=int, default=200, help="Số từ trùng giữa các đoạn.")
     parser.add_argument("--top-k", type=int, default=5, help="Số đoạn dùng để trả lời.")
     parser.add_argument("--no-ocr", action="store_true", help="Tắt OCR fallback nếu PDF đã có text.")
     parser.add_argument(
@@ -49,6 +49,7 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         default=os.environ.get("OCR_LANG", "vie+eng"),
         help="Ngôn ngữ OCR cho Tesseract (ví dụ: vie+eng).",
     )
+    parser.add_argument("--reindex", action="store_true", help="Buộc xóa database cũ và index lại dữ liệu.")
     parser.add_argument(
         "--poppler-path",
         default=os.environ.get("POPPLER_PATH"),
@@ -60,11 +61,11 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         default=1200.0,
         help="Timeout (giây) cho request tới LM Studio (mặc định 1200).",
     )
-    parser.add_argument("--temperature", type=float, default=0.1, help="Temperature cho model sinh.")
+    parser.add_argument("--temperature", type=float, default=0.7, help="Temperature cho model sinh.")
     parser.add_argument(
         "--max-output-tokens",
         type=int,
-        default=512,
+        default=1024,
         help="Giới hạn token output gửi tới model.",
     )
     parser.add_argument(
@@ -103,6 +104,7 @@ def build_config(args: argparse.Namespace) -> AppConfig:
         use_ocr=not args.no_ocr,
         ocr_lang=args.ocr_lang,
         poppler_path=args.poppler_path,
+        force_reindex=args.reindex,
     )
     retrieval_cfg = RetrievalConfig(
         embedding_model=args.embedding_model,
